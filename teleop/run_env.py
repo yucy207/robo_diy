@@ -5,8 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 import tyro
 from multiprocessing.managers import SharedMemoryManager
-from snake_agent import DynamixelRobotConfig
-from snake_agent import SnakeAgent
+from snake_agent import DynamixelRobotConfig, SnakeAgent
 from camera import USBCamera, camServer
 import zarr
 

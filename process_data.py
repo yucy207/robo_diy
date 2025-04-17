@@ -139,5 +139,5 @@ def generate_replay_buffer_from_zarr(zarr_dir, output_path, compression_level=99
     print("Done!")
     
 if __name__ == "__main__":
-    generate_replay_buffer_from_zarr('saved_data_dir', 'dataset.zarr.zip', in_res=(640, 480), out_res=(224, 224), render=False)
+    generate_replay_buffer_from_zarr('saved_data_dir', 'dataset.zarr.zip', in_res=(640, 480), out_res=(224, 224))
 

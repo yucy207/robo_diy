@@ -227,4 +227,4 @@ def main(
             )
         
 if __name__ == '__main__':
-    main('sweep.ckpt', topdown_camera=False, usb_camera=True, initialize=False, record=True, save_dir="snake_videos", store_attention=True)
+    main('sweep.ckpt', initialize=False, record=True, save_dir="snake_videos")
