@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: panoptes
+  - task: panoptes_diy
 
 name: train_diffusion_transformer_timm
 _target_: diffusion_policy.workspace.train_diffusion_transformer_timm_workspace.TrainDiffusionTransformerTimmWorkspace
@@ -109,14 +109,14 @@ ema:
   max_value: 0.9999
 
 dataloader:
-  batch_size: 32
+  batch_size: 16
   num_workers: 8
   shuffle: True
   pin_memory: True
   persistent_workers: True
 
 val_dataloader:
-  batch_size: 32
+  batch_size: 16
   num_workers: 8
   shuffle: False
   pin_memory: True
@@ -137,7 +137,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 2000
-  num_epochs: 100
+  num_epochs: 300
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.

@@ -18,6 +18,7 @@ import random
 import tqdm
 import numpy as np
 import pickle
+import numbers
 
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
@@ -333,6 +334,10 @@ class TrainDiffusionTransformerTimmWorkspace(BaseWorkspace):
                 # end of epoch
                 # log of last step is combined with validation and rollout
                 accelerator.log(step_log, step=self.global_step)
+                print(step_log.keys())
+                print(self.global_step)
+                if "train_action_mse_error" in step_log:
+                    print(step_log["train_action_mse_error"])
                 json_logger.log(step_log)
                 self.global_step += 1
                 self.epoch += 1

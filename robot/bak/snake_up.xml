@@ -4,9 +4,9 @@
     <asset>
       <material name="black" rgba="0.2 0.2 0.2 1"/>
   
-      <mesh name="base" file="base_link.STL" scale="1 1 1"/>
-      <mesh name="body" file="body_module.STL" scale="1 1 1"/>
-      <mesh name="head" file="head_module.STL" scale="1 1 1"/>
+      <mesh name="base" file="base_link.STL"/>
+      <mesh name="body" file="body_module.STL"/>
+      <mesh name="head" file="head_module.STL"/>
 
     </asset>
   
@@ -32,7 +32,7 @@
         <!-- <freejoint/> -->
         <geom mesh="base" class="visual"/>
         <!-- <geom mesh="body_c" class="collision"/> -->
-        <body name="link1" pos="0 0.305 0" quat="0.7071068 0 0.7071068 0">
+        <body name="link1" pos="0 0.0305 0" quat="0.7071068 0 0.7071068 0">
           <!-- <inertial pos="0 0 0" mass="0.0284215307947391" diaginertia="4.61797384662241e-06 3.37759616677652e-06 3.92947315930169e-06"/> -->
           <joint name="joint0" axis="0 0 1"/>
           <geom mesh="body" class="visual"/>
@@ -97,18 +97,18 @@
                       <site name="link7_cam1" pos="0.0184 0.0251 -0.0086" size="0.01" rgba="0.0 1.0 0.0 1.0"
                             type="cylinder" quat="0.7071068 0 -0.7071068 0"/>
                       <!-- <geom mesh="link1_c" class="collision"/> -->
-                      <!-- <body name="link8" pos="0 0.0475 0" quat="0.7071068 0 -0.7071068 0"> -->
+                      <body name="link8" pos="0 0.0475 0" quat="0.7071068 0 -0.7071068 0">
                         <!-- <inertial mass="0.0284215307947391" diaginertia="4.61797384662241e-06 3.37759616677652e-06 3.92947315930169e-06"/> -->
-                        <!-- <joint name="joint7" axis="0 0 1"/>
+                        <joint name="joint7" axis="0 0 1"/>
                         <geom mesh="body" class="visual"/>
                         <site name="link8_cam0" pos="-0.0184 0.0251 -0.0086" size="0.01" rgba="0.0 0.0 1.0 1.0"
                               type="cylinder" quat="0.7071068 0 0.7071068 0"/>
-                        <site name="link8_cam1" pos="0.0184 0.0251 -0.0086" size="0.01" rgba="0.0 1.0 0.0 1.0" -->
-                              <!-- type="cylinder" quat="0.7071068 0 -0.7071068 0"/> -->
+                        <site name="link8_cam1" pos="0.0184 0.0251 -0.0086" size="0.01" rgba="0.0 1.0 0.0 1.0"
+                              type="cylinder" quat="0.7071068 0 -0.7071068 0"/>
                         <!-- <geom mesh="link1_c" class="collision"/> -->
                         <body name="head" pos="0 0.0475 0" quat="0.7071068 0 0.7071068 0">
                           <!-- <inertial mass="0.0284215307947391" diaginertia="4.61797384662241e-06 3.37759616677652e-06 3.92947315930169e-06"/> -->
-                          <joint name="joint7" axis="0 0 1"/>
+                          <joint name="joint8" axis="0 0 1"/>
                           <geom mesh="head" class="visual"/>
                           <site name="head_center" pos="0 0.0242 -0.002" size="0.01" rgba="0.0 0.0 1.0 1.0"
                                 type="cylinder" quat="0.5 0.5 0.5 -0.5"/>
@@ -129,7 +129,7 @@
                 </body>
               </body>
             </body>
-          <!-- </body> -->
+          </body>
         </body>
  
       </body>
@@ -144,7 +144,7 @@
       <position name="act5" joint="joint5"/>
       <position name="act6" joint="joint6"/>
       <position name="act7" joint="joint7"/>
-      <!-- <position name="act8" joint="joint8"/> -->
+      <position name="act8" joint="joint8"/>
     </actuator>
   </mujoco>
   
