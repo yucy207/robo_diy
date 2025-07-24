@@ -90,7 +90,7 @@ policy:
     use_group_norm: True
     share_rgb_model: True
     imagenet_norm: True
-    concat_camera_poses: True
+    concat_camera_poses: False
 
   num_inference_steps: 16
   input_pertub: 0.1 # reference: https://github.com/forever208/DDPM-IP
@@ -173,7 +173,7 @@ checkpoint:
   save_last_ckpt: True
   save_last_snapshot: False
 
-output_dir: outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
+output_dir: /data/yuchenyang/robo_checkpoint/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}
 
 multi_run:
   run_dir: outputs/${now:%Y.%m.%d}/${now:%H.%M.%S}_${name}_${task_name}

@@ -1,6 +1,6 @@
 name: panoptes_diy
 # v1_test: 4 + 3(topdown+side) cam, 8 motor
-# v2: 5 cam, 8 motor
+# v2: 7 cam, 8 motor
 
 camera_obs_latency: 0
 robot_obs_latency: 0

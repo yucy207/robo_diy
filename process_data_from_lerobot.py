@@ -151,11 +151,14 @@ def generate_replay_buffer_from_zarr(lerobot_dir, output_path, compression_level
     camera_name_to_id={
         "module1_f":0,
         "module1_b":1,
-        "module8_f":2,
-        "module8_b":3,
-        "side1":4,
-        "side2":5,
-        "topdown":6,
+        "module7_f":2,
+        "module7_b":3,
+        "module8_f":4,
+        "module8_b":5,
+        "head":6,
+        # "side1":4,
+        # "side2":5,
+        # "topdown":6,
     }
     img_compressor = JpegXl(level=compression_level, numthreads=1)
     num_frames=0
@@ -221,6 +224,7 @@ def generate_replay_buffer_from_zarr(lerobot_dir, output_path, compression_level
             camera_frames[cam_id]=np.array(frames)
 
         # Build episode data
+        # joint_pos取值范围[-90,90]，这里转换为弧度
         episode_data = {
             'action': np.stack(df['action'].values).astype(np.float32),
             'joint_pos': np.stack(df['observation.state'].values).astype(np.float32)/180*np.pi,
@@ -233,7 +237,8 @@ def generate_replay_buffer_from_zarr(lerobot_dir, output_path, compression_level
             if render:
                 imgs = []
             for i in range(episode_data['joint_pos'].shape[0]):
-                mjdata.qpos[:] = episode_data['joint_pos'][i] - np.pi/180*100
+                # qpos取值范围[- np.pi/2, np.pi/2]
+                mjdata.qpos[:] = episode_data['joint_pos'][i]
                 # mjdata.qvel[:] = episode_data['joint_vel'][i]
                 mujoco.mj_step(mjmodel, mjdata)
                 orientations = mjdata.site_xmat.copy().reshape((-1, 3, 3))[..., :2] # only keep the first two columns of the rotation matrix
@@ -248,8 +253,9 @@ def generate_replay_buffer_from_zarr(lerobot_dir, output_path, compression_level
 
             # episode_data['camera_pos'] = np.stack(cam_pos, axis=0)[:, [16, 17, 19, 18, 20, 15, 11, 7, 3, 14, 10, 6, 2, 12, 8, 4, 0, 13, 9, 5, 1], :]
             # episode_data['camera_ori'] = np.stack(cam_ori, axis=0)[:, [16, 17, 19, 18, 20, 15, 11, 7, 3, 14, 10, 6, 2, 12, 8, 4, 0, 13, 9, 5, 1], :]
-            episode_data['camera_pos'] = np.stack(cam_pos, axis=0)[:, [1,2,3,4,5,6,7], :]
-            episode_data['camera_ori'] = np.stack(cam_ori, axis=0)[:, [1,2,3,4,5,6,7], :]
+            # front 对应 绿色camera, back 对应 蓝色
+            episode_data['camera_pos'] = np.stack(cam_pos, axis=0)[:, [1,0,3,2,5,4,6], :]
+            episode_data['camera_ori'] = np.stack(cam_ori, axis=0)[:, [1,0,3,2,5,4,6], :]
 
             if render:
                 out = cv2.VideoWriter('camera.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 10, (256, 256))
@@ -271,5 +277,5 @@ def generate_replay_buffer_from_zarr(lerobot_dir, output_path, compression_level
     print("Done!")
     
 if __name__ == "__main__":
-    generate_replay_buffer_from_zarr('/home/yuchenyang/.cache/huggingface/lerobot/yucy207/robopanoptes_test12', '/home/yuchenyang/workspace/RoboPanoptes/dataset.zarr.zip', in_res=(640, 480), out_res=(224, 224), render=False)
+    generate_replay_buffer_from_zarr('/home/yuchenyang/.cache/huggingface/lerobot/yucy207/robopanoptes_test_0715', '/home/yuchenyang/workspace/RoboPanoptes/dataset.zarr.zip', in_res=(640, 480), out_res=(224, 224), render=False)
 

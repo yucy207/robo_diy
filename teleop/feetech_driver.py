@@ -1,28 +1,28 @@
 import atexit
 import logging
+import math
 import time
 from typing import Optional, Sequence, Union, Tuple
 
 import numpy as np
 import serial
 
-# 假设 Feetech 协议常量（你需要根据实际文档调整）
-ADDR_TORQUE_ENABLE = 0x40       # 假定地址：0x40，用于使能/禁止力矩
-ADDR_GOAL_POSITION = 0x74       # 假定地址：0x74，用于设置目标位置
-LEN_GOAL_POSITION = 2           # 假定数据长度2个字节
-# 对于低速舵机，单位可能不同，这里假设输入单位为度
+# 这里参考 scs0009 内存表（SCS_SERIES_CONTROL_TABLE）：
+# Torque_Enable: (40, 1)
+# Goal_Position: (42, 2)
+ADDR_TORQUE_ENABLE = 0x40       # 来自内存表：Torque_Enable
+ADDR_GOAL_POSITION = 0x42       # 来自内存表：Goal_Position
+LEN_GOAL_POSITION = 2           # 2字节数据
 
-# 假设一个简单包格式:
-# [Header(0xFF,0xFF), ID, LENGTH, COMMAND, DATA..., CHECKSUM]
-# 下面的命令号定义为：
+# 命令号定义：这里用自定义命令号模拟写入操作
 CMD_SET_GOAL_POSITION = 0x03
 CMD_SET_TORQUE_ENABLE = 0x04
 
 class FeetechDriver:
     """
-    Feetech 舵机通信驱动示例（Feetech 协议需参考具体文档进行修改）。
-    提供 set_torque_enabled, sync_write, write_desired_pos, write_byte 等接口，
-    接口设计与 DynamixelDriver 保持一致，以方便上层调用（例如 snake_agent）。
+    Feetech 驱动，参考 lerobot 的 FeetechMotorsBus 封装以及 scs0009 内存表，
+    实现 set_torque_enabled, sync_write, write_desired_pos, write_byte 等接口。
+    上层（例如 snake_agent）可直接替换原 DynamixelDriver 使用此驱动。
     """
     def __init__(self,
                  motor_ids: Sequence[int],
@@ -34,7 +34,6 @@ class FeetechDriver:
         self.baudrate = baudrate
         self.timeout = timeout
         self.serial = None
-        self._sync_writers = {}  # 简单模拟的 group sync 写入缓存
 
     def connect(self):
         self.serial = serial.Serial(port=self.port_name,
@@ -48,7 +47,7 @@ class FeetechDriver:
 
     def disconnect(self):
         if self.is_connected:
-            # 关闭前可以禁用所有舵机
+            # 关闭前禁用所有舵机力矩（确保安全）
             self.set_torque_enabled(self.motor_ids, False)
             self.serial.close()
             self.serial = None
@@ -61,43 +60,42 @@ class FeetechDriver:
     def send_packet(self, packet: bytes):
         self.check_connected()
         self.serial.write(packet)
-        # 根据需要可添加读取响应的逻辑
+        # 为避免发送过快，简单 sleep 一段（可根据实际情况调整）
         time.sleep(0.005)
 
     def build_packet(self, motor_id: int, command: int, data: bytes) -> bytes:
         """
-        构建数据包，格式: Header(0xFF, 0xFF) + motor_id (1B) + LENGTH (1B) + command (1B) + data + checksum (1B)
-        checksum 为除 Header 外所有字节的和的低 8 位取反。
+        根据协议构造数据包：
+        包格式: [Header(0xFF,0xFF), ID, LENGTH, COMMAND, DATA..., CHECKSUM]
+        checksum 为除 Header 外所有字节之和取反后保留低 8 位。
         """
         header = bytes([0xFF, 0xFF])
         id_byte = bytes([motor_id])
-        length = 1 + len(data) + 1  # command + data + checksum
+        length = 1 + len(data) + 1  # 包含 command, data, checksum
         length_byte = bytes([length])
         command_byte = bytes([command])
         packet_without_checksum = id_byte + length_byte + command_byte + data
-        checksum = (~(sum(packet_without_checksum)) & 0xFF)
+        checksum = (~sum(packet_without_checksum)) & 0xFF
         checksum_byte = bytes([checksum])
         packet = header + packet_without_checksum + checksum_byte
         return packet
 
     def write_byte(self, motor_ids: Sequence[int], value: int, address: int) -> Sequence[int]:
         """
-        对于 Feetech 舵机，假定写入一个字节的命令使用自定义 command CMD_SET_TORQUE_ENABLE(或其他)
-        此处 address 参数可以用作标识不同命令。
+        写入单字节值到指定地址。
+        此处根据 address 判断命令类型：
+          - 如果 address==ADDR_TORQUE_ENABLE，则使用 CMD_SET_TORQUE_ENABLE，
+            data 为单字节的目标值。
         返回写入失败的 motor id 列表。
         """
         self.check_connected()
         errored_ids = []
-        # 这里简单将 address 当作区分命令的依据
         for motor_id in motor_ids:
-            # 根据 address 选择命令：
             if address == ADDR_TORQUE_ENABLE:
                 command = CMD_SET_TORQUE_ENABLE
-                # data 包含一个字节的目标值
                 data = bytes([value])
             else:
-                # 其他地址暂不支持
-                logging.error("Unsupported address %s in write_byte", address)
+                logging.error("Unsupported address %s for write_byte", address)
                 errored_ids.append(motor_id)
                 continue
             packet = self.build_packet(motor_id, command, data)
@@ -114,7 +112,7 @@ class FeetechDriver:
                            retries: int = -1,
                            retry_interval: float = 0.25):
         """
-        设置舵机的开/关力矩。
+        设置指定 motor_ids 的舵机是否使能力矩。
         """
         remaining_ids = list(motor_ids)
         while remaining_ids:
@@ -133,36 +131,30 @@ class FeetechDriver:
                    address: int,
                    size: int):
         """
-        对一组舵机同时写入数据。
-        由于 Feetech 驱动可能不支持组写，本实现遍历 motor_ids 逐个发送数据包。
+        对指定电机进行同步写入。
+        Feetech 驱动通常不支持组写，本实现逐个发送包。
+        参数 values 通常为目标位置等，若需要转换可在此处理。
         """
         self.check_connected()
         assert len(motor_ids) == len(values), "motor_ids and values length mismatch"
         for motor_id, value in zip(motor_ids, values):
-            # 假设 value 已经是目标值，若需要转换请在此进行（如角度转换）
-            # 将 value 转换到整数形式，并生成数据包
-            if size == 2:
-                # 2字节数据，按 little-endian 编码
-                data = int(value).to_bytes(size, byteorder='little', signed=False)
-            else:
-                data = int(value).to_bytes(size, byteorder='little', signed=False)
-            # 使用 CMD_SET_GOAL_POSITION 作为设置目标位置命令
+            # 此处假设 value 是数字，将其转换为整数后编码为小端字节序
+            data = int(value).to_bytes(size, byteorder='little', signed=False)
             packet = self.build_packet(motor_id, CMD_SET_GOAL_POSITION, data)
             self.send_packet(packet)
 
     def write_desired_pos(self, motor_ids: Sequence[int],
                           positions: np.ndarray):
         """
-        写入舵机目标位置。
-        参数 positions 单位为度（你也可以改为其他单位），需要转换成舵机内部单位（此处假定不做转换）。
+        写入舵机的目标位置。
+        positions 单位为度（如需要转换，请在此扩展）。
+        这里参考 "Goal_Position" 在 scs0009 中的地址和数据长度。
         """
         self.check_connected()
         assert len(motor_ids) == len(positions), "Mismatch in write_desired_pos"
-        # 如果需要转换，例如将度转换为实际寄存器值，可在此处理
         self.sync_write(motor_ids, positions, ADDR_GOAL_POSITION, LEN_GOAL_POSITION)
 
-    def check_connected_and_raise(self):
-        self.check_connected()
+    # 其他辅助接口（例如 check_connected_and_raise 等）可按需扩展
 
     def __enter__(self):
         if not self.is_connected:
@@ -179,22 +171,17 @@ class FeetechDriver:
             pass
 
 def feetech_cleanup_handler():
-    # 如果有多个 driver 实例，自动调用 disconnect() 以安全关闭串口
     logging.info("Cleanup Feetech driver resources.")
 
 atexit.register(feetech_cleanup_handler)
 
-# For command-line testing
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '-m', '--motors', required=True,
-        help='Comma-separated list of motor IDs, e.g., 1,2,3')
-    parser.add_argument(
-        '-p', '--port', default='/dev/ttyUSB0', help='Serial port device')
-    parser.add_argument(
-        '-b', '--baud', type=int, default=115200, help='Baudrate')
+    parser.add_argument('-m', '--motors', required=True,
+                        help='Comma-separated list of motor IDs, e.g., 1,2,3')
+    parser.add_argument('-p', '--port', default='/dev/ttyUSB0', help='Serial port device')
+    parser.add_argument('-b', '--baud', type=int, default=115200, help='Baudrate')
     args = parser.parse_args()
 
     motor_ids = [int(x) for x in args.motors.split(",")]
