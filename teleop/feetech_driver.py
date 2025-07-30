@@ -986,3 +986,53 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
 
     else:
         raise ValueError(f"The motor type '{motor_type}' is not valid.")
+
+# ================= FeetechDriver: 兼容 snake_agent.py 的简易关节接口 =================
+class FeetechDriver:
+    def __init__(self, joint_ids, port="/dev/ttyUSB0", baudrate=1000000):
+        # 只支持 SCS0009，motors 字典格式: {name: (id, model)}
+        self.joint_ids = list(joint_ids)
+        self.motors = {f"m{i}": (jid, "scs0009") for i, jid in enumerate(self.joint_ids)}
+        config = FeetechMotorsBusConfig(port=port, motors=self.motors)
+        self.bus = FeetechMotorsBus(config)
+
+    def connect(self):
+        self.bus.connect()
+
+    def sync_write(self, joint_ids, values, address, size):
+        # 逐个写入
+        for jid, val in zip(joint_ids, values):
+            self.bus.write_with_motor_ids(["scs0009"], [jid], self._addr_to_name(address), [int(val)])
+
+    def set_torque_enabled(self, joint_ids, enabled):
+        TORQUE_ENABLE_ADDR = 40  # SCS0009
+        for jid in joint_ids:
+            self.bus.write_with_motor_ids(["scs0009"], [jid], "Torque_Enable", [int(enabled)])
+
+    def read_pos(self):
+        # 读取所有关节 Present_Position
+        return np.array([
+            self.bus.read_with_motor_ids(["scs0009"], [jid], "Present_Position")[0]
+            for jid in self.joint_ids
+        ])
+
+    def read_vel(self):
+        return np.array([
+            self.bus.read_with_motor_ids(["scs0009"], [jid], "Present_Speed")[0]
+            for jid in self.joint_ids
+        ])
+
+    def write_desired_pos(self, joint_ids, positions):
+        # 逐个写入目标位置
+        for jid, pos in zip(joint_ids, positions):
+            self.bus.write_with_motor_ids(["scs0009"], [jid], "Goal_Position", [int(pos)])
+
+    def _addr_to_name(self, address):
+        # 地址到寄存器名的简单映射（常用）
+        addr_map = {
+            40: "Torque_Enable",
+            42: "Goal_Position",
+            56: "Present_Position",
+            58: "Present_Speed",
+        }
+        return addr_map.get(address, address)
