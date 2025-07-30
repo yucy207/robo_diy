@@ -10,6 +10,111 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 import numpy as np
 
 from dynamixel_driver import DynamixelDriver
+from feetech_driver import FeetechDriver
+
+class FeetechRobot():
+
+    def __init__(
+        self,
+        joint_ids: Sequence[int],
+        joint_offsets: Optional[Sequence[float]] = None,
+        joint_signs: Optional[Sequence[int]] = None,
+        port: str = "/dev/ttyUSB0",
+        baudrate: int = 1000000,
+        start_joints: Optional[np.ndarray] = None,
+        enable_torque: bool = False,
+        model: str = "scs0009",  # 新增参数，默认scs0009
+    ):
+        self.kP = 600
+        self.kI = 0
+        self.kD = 200
+        self.curr_lim = 550
+        self._joint_ids = joint_ids
+        self._model = model
+        self._resolution = 4096 if model == "scs0009" else 4096  # 可扩展
+        if joint_offsets is None:
+            self._joint_offsets = np.zeros(len(joint_ids))
+        else:
+            self._joint_offsets = np.array(joint_offsets)
+        if joint_signs is None:
+            self._joint_signs = np.ones(len(joint_ids))
+        else:
+            self._joint_signs = np.array(joint_signs)
+        assert len(self._joint_ids) == len(self._joint_offsets)
+        assert len(self._joint_ids) == len(self._joint_signs)
+        assert np.all(np.abs(self._joint_signs) == 1)
+        self._driver = FeetechDriver(joint_ids, port=port, baudrate=baudrate)
+        self._driver.connect()
+        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * 5, 11, 1)
+        self._driver.set_torque_enabled(joint_ids, enable_torque)
+        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * self.kP, 84, 2)
+        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * self.kI, 82, 2)
+        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * self.kD, 80, 2)
+        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * self.curr_lim, 102, 2)
+        self._torque_on = True
+        self._last_pos = None
+        self._alpha = 0.99
+        if start_joints is not None:
+            new_joint_offsets = []
+            current_joints = self.get_joint_pos()
+            assert current_joints.shape == start_joints.shape
+            for idx, (c_joint, s_joint, joint_offset) in enumerate(
+                zip(current_joints, start_joints, self._joint_offsets)
+            ):
+                new_joint_offsets.append(
+                    np.pi * 2 * np.round((-s_joint + c_joint) / (2 * np.pi)) * self._joint_signs[idx] + joint_offset
+                )
+            self._joint_offsets = np.array(new_joint_offsets)
+
+    def num_dofs(self) -> int:
+        return len(self._joint_ids)
+
+    def _steps_to_rad(self, steps):
+        # SCS0009: 0~4095 -> -pi~pi
+        return (np.array(steps) - self._resolution / 2) * (2 * np.pi / self._resolution)
+
+    def _rad_to_steps(self, rad):
+        # -pi~pi -> 0~4095
+        return np.round((np.array(rad) * (self._resolution / (2 * np.pi))) + self._resolution / 2).astype(int)
+
+    def read_pos(self) -> np.ndarray:
+        # 读取原始步进值，转为弧度
+        steps = self._driver.read_pos()
+        return self._steps_to_rad(steps)
+
+    def read_vel(self) -> np.ndarray:
+        # 读取原始速度（如有需要可补充转换）
+        return self._driver.read_vel()
+
+    def write_desired_pos(self, joint_ids, pos_rad):
+        # 弧度转步进后写入
+        steps = self._rad_to_steps(pos_rad)
+        self._driver.write_desired_pos(joint_ids, steps)
+
+    def get_joint_pos(self) -> np.ndarray:
+        pos = (self.read_pos() - self._joint_offsets) * self._joint_signs
+        assert len(pos) == self.num_dofs()
+        if self._last_pos is None:
+            self._last_pos = pos
+        else:
+            pos = self._last_pos * (1 - self._alpha) + pos * self._alpha
+            self._last_pos = pos
+        return pos
+
+    def get_joint_vel(self) -> np.ndarray:
+        return self.read_vel() * self._joint_signs
+
+    def command_joint_state(self, joint_state: np.ndarray) -> None:
+        self.write_desired_pos(self._joint_ids, joint_state + self._joint_offsets)
+
+    def set_torque_mode(self, mode: bool):
+        if mode == self._torque_on:
+            return
+        self._driver.set_torque_enabled(self._joint_ids, mode)
+        self._torque_on = mode
+
+    def get_observations(self) -> Dict[str, np.ndarray]:
+        return {"joint_pos": self.get_joint_pos(), "joint_vel": self.get_joint_vel()}
 
 class DynamixelRobot():
 

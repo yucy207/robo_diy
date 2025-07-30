@@ -6,6 +6,8 @@ data/
 wandb/
 diffusion_policy/ckpt/
 outputs/
+d/
+robot/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
