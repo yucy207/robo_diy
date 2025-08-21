@@ -72,7 +72,10 @@ class RobotDeviceAlreadyConnectedError(Exception):
 
 
 # STS:0  SCS:1
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = {
+    "scs0009": 1,
+    "sts3215": 0,
+}
 BAUDRATE = 1_000_000
 TIMEOUT_MS = 1000
 
@@ -362,7 +365,7 @@ class FeetechMotorsBus:
         import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
-        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION["sts3215"])
 
         try:
             if not self.port_handler.openPort():
@@ -383,7 +386,7 @@ class FeetechMotorsBus:
         import scservo_sdk as scs
 
         self.port_handler = scs.PortHandler(self.port)
-        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION)
+        self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION["sts3215"])
 
         if not self.port_handler.openPort():
             raise OSError(f"Failed to open port '{self.port}'.")
@@ -756,15 +759,22 @@ class FeetechMotorsBus:
 
         motor_ids = []
         models = []
+        sts_motor_names = []
+        sts_motor_ids = []
+        motor_id2model = {}
         for name in motor_names:
             motor_idx, model = self.motors[name]
             motor_ids.append(motor_idx)
             models.append(model)
+            motor_id2model[motor_idx]=model
+            if model == 'sts3215':
+                sts_motor_names.append(name)
+                sts_motor_ids.append(motor_idx)
 
         assert_same_address(self.model_ctrl_table, models, data_name)
         addr, bytes = self.model_ctrl_table[model][data_name]
-        group_key = get_group_sync_key(data_name, motor_names)
-
+        group_key = get_group_sync_key(data_name, sts_motor_names)
+        # print("data_name:",data_name)
         if data_name not in self.group_readers:
             # Very Important to flush the buffer!
             self.port_handler.ser.reset_output_buffer()
@@ -774,9 +784,9 @@ class FeetechMotorsBus:
             self.group_readers[group_key] = scs.GroupSyncRead(
                 self.port_handler, self.packet_handler, addr, bytes
             )
-            for idx in motor_ids:
+            for idx in sts_motor_ids:
                 self.group_readers[group_key].addParam(idx)
-        if self.motor_models[0] != 'scs0009':
+        if 'sts3215' in self.motor_models:
             for _ in range(NUM_READ_RETRY):
                 comm = self.group_readers[group_key].txRxPacket()
                 if comm == scs.COMM_SUCCESS:
@@ -790,15 +800,16 @@ class FeetechMotorsBus:
 
         values = []
         for idx in motor_ids:
-            if self.motor_models[0] == 'scs0009':
+            self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION[motor_id2model[idx]])
+            if motor_id2model[idx] == 'scs0009':
                 if bytes == 1:
                     value, comm, error = self.packet_handler.read1ByteTxRx(self.port_handler, idx, addr)
                 elif bytes == 2:
                     value, comm, error = self.packet_handler.read2ByteTxRx(self.port_handler, idx, addr)
                 if comm != scs.COMM_SUCCESS or error != 0:
                     raise ConnectionError(
-                        f"Read failed due to communication error on port {self.port} for idx {idx}: "
-                        f"{self.packet_handler.getTxRxResult(comm)}"
+                        f"Write failed on port {self.port} for idx {idx}: comm={comm} ({self.packet_handler.getTxRxResult(comm)}), "
+                        f"error={error} ({self.packet_handler.getRxPacketError(error)})"
                     )
             else:
                 value = self.group_readers[group_key].getData(idx, addr, bytes)
@@ -807,6 +818,8 @@ class FeetechMotorsBus:
         values = np.array(values)
 
         # Convert to signed int to use range [-2048, 2048] for our motor positions.
+        # print("before cali:", values)
+        # time.sleep(0.5)  # wait for the motors to update their values
         if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
             values = values.astype(np.int32)
 
@@ -819,6 +832,10 @@ class FeetechMotorsBus:
         # log the number of seconds it took to read the data from the motors
         delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
         self.logs[delta_ts_name] = time.perf_counter() - start_time
+
+        # log the utc time at which the data was received
+        ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
+        self.logs[ts_utc_name] = capture_timestamp_utc()
 
         return values
 
@@ -893,36 +910,18 @@ class FeetechMotorsBus:
         # print("addr:",addr)
         # print("bytes:",bytes)
         # print("self.port_handler.port_name:",self.port_handler.port_name)
-        if self.motor_models[0] != 'scs0009':
-            if init_group:
-                self.group_writers[group_key] = scs.GroupSyncWrite(
-                    self.port_handler, self.packet_handler, addr, bytes
-                )
-
-            for idx, value in zip(motor_ids, values, strict=True):
-                data = convert_to_bytes(value, bytes)
-                if init_group:
-                    self.group_writers[group_key].addParam(idx, data)
-                else:
-                    self.group_writers[group_key].changeParam(idx, data)
-
-            comm = self.group_writers[group_key].txPacket()
-            if comm != scs.COMM_SUCCESS:
+        for idx, value in zip(motor_ids, values, strict=True):
+            protocol_version = PROTOCOL_VERSION[models[idx]]
+            self.packet_handler = scs.PacketHandler(protocol_version)
+            if bytes == 1:
+                comm, error = self.packet_handler.write1ByteTxRx(self.port_handler, idx, addr, value)
+            elif bytes == 2:
+                comm, error = self.packet_handler.write2ByteTxRx(self.port_handler, idx, addr, value)
+            if comm != scs.COMM_SUCCESS or error != 0:
                 raise ConnectionError(
-                    f"Write failed due to communication error on port {self.port} for group_key {group_key}: "
+                    f"Write failed due to communication error on port {self.port} for idx {idx}: "
                     f"{self.packet_handler.getTxRxResult(comm)}"
                 )
-        elif self.motor_models[0] == "scs0009":
-            for idx, value in zip(motor_ids, values, strict=True):
-                if bytes == 1:
-                    comm, error = self.packet_handler.write1ByteTxRx(self.port_handler, idx, addr, value)
-                elif bytes == 2:
-                    comm, error = self.packet_handler.write2ByteTxRx(self.port_handler, idx, addr, value)
-                if comm != scs.COMM_SUCCESS or error != 0:
-                    raise ConnectionError(
-                        f"Write failed due to communication error on port {self.port} for idx {idx}: "
-                        f"{self.packet_handler.getTxRxResult(comm)}"
-                    )
 
         # log the number of seconds it took to write the data to the motors
         delta_ts_name = get_log_name("delta_timestamp_s", "write", data_name, motor_names)
@@ -989,10 +988,17 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
 
 # ================= FeetechDriver: 兼容 snake_agent.py 的简易关节接口 =================
 class FeetechDriver:
-    def __init__(self, joint_ids, port="/dev/ttyUSB0", baudrate=1000000):
-        # 只支持 SCS0009，motors 字典格式: {name: (id, model)}
+    def __init__(self, joint_ids, port="/dev/ttyUSB0", baudrate=1000000, models):
+        # 支持混合 SCS/STS，motors 字典格式: {name: (id, model)}
         self.joint_ids = list(joint_ids)
-        self.motors = {f"m{i}": (jid, "scs0009") for i, jid in enumerate(self.joint_ids)}
+        self.models = list(models)
+
+        # Validate lengths match
+        assert len(self.joint_ids) == len(self.models), (
+            f"joint_ids length ({len(self.joint_ids)}) must match models length ({len(self.models)})"
+        )
+
+        self.motors = {f"m{i}": (jid, model) for i, (jid, model) in enumerate(zip(self.joint_ids, self.models))}
         config = FeetechMotorsBusConfig(port=port, motors=self.motors)
         self.bus = FeetechMotorsBus(config)
 
@@ -1002,30 +1008,38 @@ class FeetechDriver:
     def sync_write(self, joint_ids, values, address, size):
         # 逐个写入
         for jid, val in zip(joint_ids, values):
-            self.bus.write_with_motor_ids(["scs0009"], [jid], self._addr_to_name(address), [int(val)])
+            # Find the model for this joint_id
+            motor_model = self._get_model_for_joint_id(jid)
+            self.bus.write_with_motor_ids([motor_model], [jid], self._addr_to_name(address), [int(val)])
 
     def set_torque_enabled(self, joint_ids, enabled):
-        TORQUE_ENABLE_ADDR = 40  # SCS0009
         for jid in joint_ids:
-            self.bus.write_with_motor_ids(["scs0009"], [jid], "Torque_Enable", [int(enabled)])
+            # Find the model for this joint_id
+            motor_model = self._get_model_for_joint_id(jid)
+            self.bus.write_with_motor_ids([motor_model], [jid], "Torque_Enable", [int(enabled)])
 
     def read_pos(self):
-        # 读取所有关节 Present_Position
-        return np.array([
-            self.bus.read_with_motor_ids(["scs0009"], [jid], "Present_Position")[0]
-            for jid in self.joint_ids
-        ])
+        # 读取所有关节 Present_Position，使用对应的motor model
+        result = []
+        for jid in self.joint_ids:
+            motor_model = self._get_model_for_joint_id(jid)
+            pos = self.bus.read_with_motor_ids([motor_model], [jid], "Present_Position")[0]
+            result.append(pos)
+        return np.array(result)
 
     def read_vel(self):
-        return np.array([
-            self.bus.read_with_motor_ids(["scs0009"], [jid], "Present_Speed")[0]
-            for jid in self.joint_ids
-        ])
+        result = []
+        for jid in self.joint_ids:
+            motor_model = self._get_model_for_joint_id(jid)
+            vel = self.bus.read_with_motor_ids([motor_model], [jid], "Present_Speed")[0]
+            result.append(vel)
+        return np.array(result)
 
     def write_desired_pos(self, joint_ids, positions):
         # 逐个写入目标位置
         for jid, pos in zip(joint_ids, positions):
-            self.bus.write_with_motor_ids(["scs0009"], [jid], "Goal_Position", [int(pos)])
+            motor_model = self._get_model_for_joint_id(jid)
+            self.bus.write_with_motor_ids([motor_model], [jid], "Goal_Position", [int(pos)])
 
     def _addr_to_name(self, address):
         # 地址到寄存器名的简单映射（常用）
@@ -1036,3 +1050,18 @@ class FeetechDriver:
             58: "Present_Speed",
         }
         return addr_map.get(address, address)
+
+    def _get_model_for_joint_id(self, joint_id: int) -> str:
+        """Get the model for a specific joint ID"""
+        try:
+            joint_index = self.joint_ids.index(joint_id)
+            return self.models[joint_index]
+        except ValueError:
+            raise ValueError(f"Joint ID {joint_id} not found in joint_ids list: {self.joint_ids}")
+
+    def get_motor_info(self) -> dict:
+        """Get information about all motors"""
+        return {
+            f"joint_{jid}": {"id": jid, "model": model}
+            for jid, model in zip(self.joint_ids, self.models)
+        }

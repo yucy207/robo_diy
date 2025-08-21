@@ -6,7 +6,7 @@ sys.path.insert(0, BASEPATH)
 sys.path.insert(0, pjoin(BASEPATH, '..'))
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple, List
 import numpy as np
 
 from dynamixel_driver import DynamixelDriver
@@ -23,15 +23,24 @@ class FeetechRobot():
         baudrate: int = 1000000,
         start_joints: Optional[np.ndarray] = None,
         enable_torque: bool = False,
-        model: str = "scs0009",  # 新增参数，默认scs0009
+        models: Optional[Sequence[str]] = None,  
     ):
         self.kP = 600
         self.kI = 0
         self.kD = 200
         self.curr_lim = 550
         self._joint_ids = joint_ids
-        self._model = model
-        self._resolution = 4096 if model == "scs0009" else 4096  # 可扩展
+
+        self._models = list(models)
+        self._resolution = []
+        for model in self._models:
+            if model == "scs0009":
+                self._resolution.append(1228.8)
+            elif model == "sts3215":
+                self._resolution.append(4096)
+            else:
+                raise ValueError(f"Invalid model: {model}")
+
         if joint_offsets is None:
             self._joint_offsets = np.zeros(len(joint_ids))
         else:
@@ -42,8 +51,10 @@ class FeetechRobot():
             self._joint_signs = np.array(joint_signs)
         assert len(self._joint_ids) == len(self._joint_offsets)
         assert len(self._joint_ids) == len(self._joint_signs)
+        assert len(self._joint_ids) == len(self._models)
+        assert len(self._joint_ids) == len(self._resolution)
         assert np.all(np.abs(self._joint_signs) == 1)
-        self._driver = FeetechDriver(joint_ids, port=port, baudrate=baudrate)
+        self._driver = FeetechDriver(joint_ids, port=port, baudrate=baudrate, models=self._models)
         self._driver.connect()
         self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * 5, 11, 1)
         self._driver.set_torque_enabled(joint_ids, enable_torque)
@@ -69,13 +80,37 @@ class FeetechRobot():
     def num_dofs(self) -> int:
         return len(self._joint_ids)
 
+    def get_motor_resolution(self, motor_index: int) -> int:
+        """Get resolution for a specific motor by index"""
+        if motor_index < 0 or motor_index >= len(self._resolution):
+            raise IndexError(f"Motor index {motor_index} out of range. Valid range: 0-{len(self._resolution)-1}")
+        return self._resolution[motor_index]
+
+    def get_all_resolutions(self) -> List[int]:
+        """Get list of all motor resolutions"""
+        return self._resolution.copy()
+
     def _steps_to_rad(self, steps):
-        # SCS0009: 0~4095 -> -pi~pi
-        return (np.array(steps) - self._resolution / 2) * (2 * np.pi / self._resolution)
+        # Handle different resolutions for each motor
+        # Array of steps - handle per-motor resolution
+        steps_array = np.array(steps)
+        result = []
+        for i, step in enumerate(steps_array):
+            resolution = self._resolution[i]
+            rad = (step - resolution / 2) * (2 * np.pi / resolution)
+            result.append(rad)
+        return np.array(result)
 
     def _rad_to_steps(self, rad):
-        # -pi~pi -> 0~4095
-        return np.round((np.array(rad) * (self._resolution / (2 * np.pi))) + self._resolution / 2).astype(int)
+        # Handle different resolutions for each motor
+        # Array of radians - handle per-motor resolution
+        rad_array = np.array(rad)
+        result = []
+        for i, r in enumerate(rad_array):
+            resolution = self._resolution[i]
+            step = np.round((r * (resolution / (2 * np.pi))) + resolution / 2).astype(int)
+            result.append(step)
+        return np.array(result)
 
     def read_pos(self) -> np.ndarray:
         # 读取原始步进值，转为弧度
@@ -115,6 +150,48 @@ class FeetechRobot():
 
     def get_observations(self) -> Dict[str, np.ndarray]:
         return {"joint_pos": self.get_joint_pos(), "joint_vel": self.get_joint_vel()}
+
+@dataclass
+class FeetechRobotConfig:
+    joint_ids: Sequence[int]
+    joint_offsets: Sequence[float]
+    joint_signs: Sequence[int]
+
+    models: Sequence[str]
+    baudrate: int = 1000000
+
+    def __post_init__(self):
+        assert len(self.joint_ids) == len(self.joint_offsets), (
+            f"joint_ids: {len(self.joint_ids)}, joint_offsets: {len(self.joint_offsets)}"
+        )
+        assert len(self.joint_ids) == len(self.joint_signs), (
+            f"joint_ids: {len(self.joint_ids)}, joint_signs: {len(self.joint_signs)}"
+        )
+        # Optional: enforce that signs are ±1
+        assert all(abs(s) == 1 for s in self.joint_signs), f"joint_signs: {self.joint_signs}"
+
+        # Validate motor models
+        valid_models = {"scs0009", "sts3215"}
+        assert all(model in valid_models for model in self.models), (
+            f"Invalid models found. Valid: {valid_models}, Got: {self.models}"
+        )
+
+    def make_robot(
+        self,
+        port: str = "/dev/ttyUSB0",
+        start_joints: Optional[np.ndarray] = None,
+        enable_torque: bool = False,
+    ) -> FeetechRobot:
+        return FeetechRobot(
+            joint_ids=self.joint_ids,
+            joint_offsets=list(self.joint_offsets),
+            joint_signs=list(self.joint_signs),
+            port=port,
+            baudrate=self.baudrate,
+            start_joints=start_joints,
+            enable_torque=enable_torque,
+            models=list(self.models),
+        )
 
 class DynamixelRobot():
 
