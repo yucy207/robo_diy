@@ -175,7 +175,7 @@ MODEL_CONTROL_TABLE = {
 }
 
 MODEL_RESOLUTION = {
-    "scs0009": 4096,
+    "scs0009": 1228.8,
     "scs_series": 4096,
     "sts3215": 4096,
 }
@@ -888,10 +888,12 @@ class FeetechMotorsBus:
 
         motor_ids = []
         models = []
+        motor_id2model = {}
         for name in motor_names:
             motor_idx, model = self.motors[name]
             motor_ids.append(motor_idx)
             models.append(model)
+            motor_id2model[motor_idx]=model
 
         if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
             values = self.revert_calibration(values, motor_names)
@@ -911,7 +913,7 @@ class FeetechMotorsBus:
         # print("bytes:",bytes)
         # print("self.port_handler.port_name:",self.port_handler.port_name)
         for idx, value in zip(motor_ids, values, strict=True):
-            protocol_version = PROTOCOL_VERSION[models[idx]]
+            protocol_version = PROTOCOL_VERSION[motor_id2model[idx]]
             self.packet_handler = scs.PacketHandler(protocol_version)
             if bytes == 1:
                 comm, error = self.packet_handler.write1ByteTxRx(self.port_handler, idx, addr, value)
@@ -988,7 +990,7 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
 
 # ================= FeetechDriver: 兼容 snake_agent.py 的简易关节接口 =================
 class FeetechDriver:
-    def __init__(self, joint_ids, port="/dev/ttyUSB0", baudrate=1000000, models):
+    def __init__(self, joint_ids, port="/dev/ttyUSB0", baudrate=1000000, models=[]):
         # 支持混合 SCS/STS，motors 字典格式: {name: (id, model)}
         self.joint_ids = list(joint_ids)
         self.models = list(models)

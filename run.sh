@@ -11,5 +11,7 @@ HF_USER=$(huggingface-cli whoami | head -n 1)
 echo "$HF_USER"
 
 dataset_id="_0818"
-local_dir="/data/yuchenyang/snake_traj"
+local_dir="/data/yuchenyang/snake_traj/gap_pick_place"
+# download with mirror and proxy_off
+export HF_ENDPOINT=https://hf-mirror.com
 huggingface-cli download --repo-type dataset  yucy207/robopanoptes_test${dataset_id} --local-dir ${local_dir}

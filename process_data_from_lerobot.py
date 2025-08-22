@@ -277,5 +277,5 @@ def generate_replay_buffer_from_zarr(lerobot_dir, output_path, compression_level
     print("Done!")
     
 if __name__ == "__main__":
-    generate_replay_buffer_from_zarr('/data/yuchenyang/snake_traj/datasets--yucy207--robopanoptes_test_0818/snapshots/457760c7a864727486460577e3e0516716d96e8a/', '/home/yuchenyang/workspace/RoboPanoptes/dataset.zarr.zip', in_res=(640, 480), out_res=(224, 224), render=False)
+    generate_replay_buffer_from_zarr('/data/yuchenyang/snake_traj/gap_pick_place', '/home/yuchenyang/workspace/RoboPanoptes/dataset.zarr.zip', in_res=(640, 480), out_res=(224, 224), render=False)
 
