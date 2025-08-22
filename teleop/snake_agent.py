@@ -132,7 +132,8 @@ class FeetechRobot():
         return pos
 
     def get_joint_vel(self) -> np.ndarray:
-        return self.read_vel() * self._joint_signs
+        return np.ones_like(self._joint_signs, dtype=np.float32)
+        # return self.read_vel() * self._joint_signs
 
     def command_joint_state(self, joint_state: np.ndarray) -> None:
         self.write_desired_pos(self._joint_ids, joint_state + self._joint_offsets)
@@ -262,7 +263,8 @@ class DynamixelRobot():
         return len(self._joint_ids)
 
     def get_joint_pos(self) -> np.ndarray:
-        pos = (self._driver.read_pos() - self._joint_offsets) * self._joint_signs
+        # pos = (self._driver.read_pos() - self._joint_offsets) * self._joint_signs
+        pos = self._driver.read_pos() * self._joint_signs + self._joint_offsets
         assert len(pos) == self.num_dofs()
 
         if self._last_pos is None:

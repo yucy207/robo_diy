@@ -10,6 +10,8 @@ import torch
 from multiprocessing.managers import SharedMemoryManager
 import mujoco
 from diffusion_policy.common.pytorch_util import dict_apply
+import json
+from pathlib import Path
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from teleop.snake_agent import DynamixelRobotConfig,FeetechRobotConfig
@@ -25,9 +27,9 @@ def get_policy_obs(obs, resize_tf=None):
         'joint_pos': obs['joint_pos'].astype(np.float32),
     }      
     # for i in [7, 9, 12, 14, 16, 18, 19, 21]:
-    for i in range(7):
-        obs['usb_cam'][i] = np.flip(np.flip(obs['usb_cam'][i], axis=0), axis=1)
-    for i, frame in enumerate(obs['usb_cam'][2:]):
+    # for i in range(7):
+    #     obs['usb_cam'][i] = np.flip(np.flip(obs['usb_cam'][i], axis=0), axis=1)
+    for i, frame in enumerate(obs['usb_cam'][:]):
         rgb = resize_tf(frame)
         rgb = np.moveaxis(rgb, -1, 0).astype(np.float32) / 255.0
         policy_obs[f'camera{i}_rgb'] = rgb
@@ -94,7 +96,26 @@ def main(
 
     # setup robot
     joint_ids = list(range(num_joints))
-    robot_config = FeetechRobotConfig(joint_ids=joint_ids, joint_offsets=np.zeros(num_joints), joint_signs=np.ones(num_joints), models=['sts3215']*2+['scs0009']*6)
+    # /home/chenyang/workspace/teleopt/lerobot_diy/.cache/calibration/robopanoptes_small/main_follower.json
+    # Try to load calibration (joint_offsets / joint_signs) from JSON cache
+    calib_path = Path("/home/chenyang/workspace/teleopt/lerobot_diy/.cache/calibration/robopanoptes_small/main_follower.json")
+    if calib_path.exists():
+        cfg_json = json.loads(calib_path.read_text())
+        joint_offsets = np.array(cfg_json.get('homing_offset'), dtype=int)
+        joint_signs = np.array(cfg_json.get('drive_mode'), dtype=int)
+        joint_signs=joint_signs*(-2)+1
+    else:
+        joint_offsets = np.zeros(num_joints)
+        joint_signs = np.ones(num_joints)
+
+    print("joint_offsets: ", joint_offsets)
+    print("joint_signs: ", joint_signs)
+    robot_config = FeetechRobotConfig(
+        joint_ids=joint_ids,
+        joint_offsets=joint_offsets,
+        joint_signs=joint_signs,
+        models=['sts3215']*2 + ['scs0009']*(num_joints-2),
+    )
 
     # device_ids = [
     # # top-down, side
