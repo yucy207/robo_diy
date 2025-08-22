@@ -226,7 +226,7 @@ def generate_replay_buffer_from_zarr(lerobot_dir, output_path, compression_level
         # Build episode data
         # joint_pos取值范围[-90,90]，这里转换为弧度
         episode_data = {
-            'action': np.stack(df['action'].values).astype(np.float32),
+            'action': np.stack(df['action'].values).astype(np.float32)/180*np.pi,
             'joint_pos': np.stack(df['observation.state'].values).astype(np.float32)/180*np.pi,
             'joint_vel': np.ones_like(np.stack(df['observation.state'].values), dtype=np.float32),
             'timestamp': timestamps

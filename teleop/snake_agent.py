@@ -11,6 +11,7 @@ import numpy as np
 
 from dynamixel_driver import DynamixelDriver
 from feetech_driver import FeetechDriver
+HALF_TURN_DEGREE = np.pi  # 180 degrees in radians
 
 class FeetechRobot():
 
@@ -92,7 +93,7 @@ class FeetechRobot():
         result = []
         for i, step in enumerate(steps_array):
             resolution = self._resolution[i]
-            rad = (step - resolution / 2) * (2 * np.pi / resolution)
+            rad = step  / (resolution / 2) * HALF_TURN_DEGREE
             result.append(rad)
         return np.array(result)
 
@@ -103,13 +104,16 @@ class FeetechRobot():
         result = []
         for i, r in enumerate(rad_array):
             resolution = self._resolution[i]
-            step = np.round((r * (resolution / (2 * np.pi))) + resolution / 2).astype(int)
+            step = np.round(r * (resolution / (2 * HALF_TURN_DEGREE))).astype(int)
             result.append(step)
         return np.array(result)
 
     def read_pos(self) -> np.ndarray:
         # 读取原始步进值，转为弧度
-        steps = self._driver.read_pos()
+        ori_steps=self._driver.read_pos()
+        # print("read_ori_steps:", ori_steps)
+        steps = ori_steps* self._joint_signs + self._joint_offsets
+        # print("read_cali_steps:", self._steps_to_rad(steps)/np.pi*180)
         return self._steps_to_rad(steps)
 
     def read_vel(self) -> np.ndarray:
@@ -118,11 +122,18 @@ class FeetechRobot():
 
     def write_desired_pos(self, joint_ids, pos_rad):
         # 弧度转步进后写入
+        # print("pos_rad:", pos_rad)
+        # DELETE NEXT LINE FOR NEW MODEL
+        # pos_rad = pos_rad/180*np.pi
         steps = self._rad_to_steps(pos_rad)
-        self._driver.write_desired_pos(joint_ids, steps)
+        # print("steps:", steps)
+        calibrated_steps = (steps - self._joint_offsets) * self._joint_signs
+        # print("calibrated_steps:", calibrated_steps)
+        self._driver.write_desired_pos(joint_ids, calibrated_steps)
 
     def get_joint_pos(self) -> np.ndarray:
-        pos = (self.read_pos() - self._joint_offsets) * self._joint_signs
+        # pos = (self.read_pos() - self._joint_offsets) * self._joint_signs
+        pos = self.read_pos()
         assert len(pos) == self.num_dofs()
         if self._last_pos is None:
             self._last_pos = pos
@@ -136,7 +147,7 @@ class FeetechRobot():
         # return self.read_vel() * self._joint_signs
 
     def command_joint_state(self, joint_state: np.ndarray) -> None:
-        self.write_desired_pos(self._joint_ids, joint_state + self._joint_offsets)
+        self.write_desired_pos(self._joint_ids, joint_state)
 
     def set_torque_mode(self, mode: bool):
         if mode == self._torque_on:
@@ -263,8 +274,7 @@ class DynamixelRobot():
         return len(self._joint_ids)
 
     def get_joint_pos(self) -> np.ndarray:
-        # pos = (self._driver.read_pos() - self._joint_offsets) * self._joint_signs
-        pos = self._driver.read_pos() * self._joint_signs + self._joint_offsets
+        pos = (self._driver.read_pos() - self._joint_offsets) * self._joint_signs
         assert len(pos) == self.num_dofs()
 
         if self._last_pos is None:

@@ -153,6 +153,7 @@ def main(
     if initialize:
         # initialize: set client joint positions to leader joint positions
         curr_joints = robot.get_act()
+        print("Current joint positions:", curr_joints)
         reset_joints = np.ones_like(curr_joints) * np.pi
         assert reset_joints.shape == curr_joints.shape
         max_delta = (np.abs(reset_joints - curr_joints)).max()
@@ -210,7 +211,7 @@ def main(
                 last_obs_dict_np = {k: np.concatenate([last_obs_dict_np[k][1:], obs_dict_np[k][None]], axis=0) for k in obs_dict_np.keys()}
                 obs_dict = dict_apply(last_obs_dict_np, lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
                 actions = policy.predict_action(obs_dict)['action_pred'][0].detach().cpu().numpy()
-
+                print("actions shape: ", actions.shape)
                 for action in actions:
                     robot.set_act(action)
                 if record:

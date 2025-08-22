@@ -258,7 +258,6 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
     all_addr = []
     all_bytes = []
     for model in motor_models:
-        print("data_name:",data_name)
         addr, bytes = model_ctrl_table[model][data_name]
         all_addr.append(addr)
         all_bytes.append(bytes)
@@ -472,7 +471,7 @@ class FeetechMotorsBus:
                     f"error={error} ({self.packet_handler.getRxPacketError(error)})"
                 )
             values.append(value)
-            print("value:", value)
+            # print("value:", value)
 
         values = np.array(values)
 
@@ -763,8 +762,8 @@ class FeetechDriver:
             # if jid < 2:
             #     continue
             motor_model = self._get_model_for_joint_id(jid)
-            print("motor_model:", motor_model)
-            print("jid:", jid)
+            # print("motor_model:", motor_model)
+            # print("jid:", jid)
             pos = self.bus.read_with_motor_ids([motor_model], [jid], "Present_Position")[0]
             result.append(pos)
         return np.array(result)
