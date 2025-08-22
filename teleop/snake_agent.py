@@ -54,7 +54,7 @@ class FeetechRobot():
         assert len(self._joint_ids) == len(self._models)
         assert len(self._joint_ids) == len(self._resolution)
         assert np.all(np.abs(self._joint_signs) == 1)
-        self._driver = FeetechDriver(joint_ids, port=port, baudrate=baudrate, models=self._models)
+        self._driver = FeetechDriver(joint_ids, self._models, port=port, baudrate=baudrate)
         self._driver.connect()
         self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * 5, 11, 1)
         self._driver.set_torque_enabled(joint_ids, enable_torque)

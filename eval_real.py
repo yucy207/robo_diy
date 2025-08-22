@@ -227,4 +227,4 @@ def main(
             )
         
 if __name__ == '__main__':
-    main('sweep.ckpt', initialize=False, record=True, save_dir="snake_videos")
+    main('/Disk2/SnakeRob-DATA/Robopanoptes_ckpt/epoch=0140-train_loss=0.023.ckpt', initialize=False, record=True, save_dir="snake_videos")

@@ -990,7 +990,7 @@ def make_motors_bus(motor_type: str, **kwargs) -> MotorsBus:
 
 # ================= FeetechDriver: 兼容 snake_agent.py 的简易关节接口 =================
 class FeetechDriver:
-    def __init__(self, joint_ids, port="/dev/ttyUSB0", baudrate=1000000, models=[]):
+    def __init__(self, joint_ids, models, port="/dev/ttyUSB0", baudrate=1000000):
         # 支持混合 SCS/STS，motors 字典格式: {name: (id, model)}
         self.joint_ids = list(joint_ids)
         self.models = list(models)
