@@ -5,7 +5,7 @@ python train.py --config-name=train_diffusion_transformer_snake_workspace task.d
 CUDA_VISIBLE_DEVICES=1,2 accelerate launch --num_processes 2 train.py --config-name=train_diffusion_transformer_snake_workspace task.dataset_path=sweep.zarr.zip
 
 
-HUGGINGFACE_TOKEN='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'
+HUGGINGFACE_TOKEN='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'
 huggingface-cli login --token ${HUGGINGFACE_TOKEN} --add-to-git-credential
 HF_USER=$(huggingface-cli whoami | head -n 1)
 echo "$HF_USER"

@@ -6,7 +6,6 @@ from typing import Optional, Protocol, Tuple, List
 import cv2
 from multiprocessing import Process
 from multiprocessing.managers import SharedMemoryManager
-from usb_util import reset_all_elgato_devices, get_sorted_v4l_paths
 
 import numpy as np
 

@@ -286,6 +286,7 @@ class TransformerObsEncoder(ModuleAttrMixin):
         # process rgb input
         # if shared model, we can process all rgb inputs in one go
         if self.share_rgb_model:
+            print("obs_dict:", obs_dict.keys())
             img = torch.cat([obs_dict[key] for key in self.rgb_keys], dim=1)
             B, T = img.shape[:2]
             assert B == batch_size

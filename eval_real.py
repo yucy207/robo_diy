@@ -12,7 +12,7 @@ import mujoco
 from diffusion_policy.common.pytorch_util import dict_apply
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from teleop.snake_agent import DynamixelRobotConfig
+from teleop.snake_agent import DynamixelRobotConfig,FeetechRobotConfig
 from teleop.snake_agent import SnakeAgent
 from teleop.camera import USBCamera, camServer
 from process_data import get_image_transform
@@ -24,7 +24,8 @@ def get_policy_obs(obs, resize_tf=None):
     policy_obs = {
         'joint_pos': obs['joint_pos'].astype(np.float32),
     }      
-    for i in [7, 9, 12, 14, 16, 18, 19, 21]:
+    # for i in [7, 9, 12, 14, 16, 18, 19, 21]:
+    for i in range(7):
         obs['usb_cam'][i] = np.flip(np.flip(obs['usb_cam'][i], axis=0), axis=1)
     for i, frame in enumerate(obs['usb_cam'][2:]):
         rgb = resize_tf(frame)
@@ -34,8 +35,8 @@ def get_policy_obs(obs, resize_tf=None):
 
 def main(
         input, 
-        port: str = "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FT9HD8F2-if00-port0",
-        num_joints: int = 9,
+        port: str = "/dev/ttyACM1",
+        num_joints: int = 8,
         control_rate: int = 30,
         camera_fps: int = 30,
         initialize: bool = False,
@@ -93,22 +94,32 @@ def main(
 
     # setup robot
     joint_ids = list(range(num_joints))
-    robot_config = DynamixelRobotConfig(joint_ids=joint_ids, joint_offsets=np.zeros(num_joints), joint_signs=np.ones(num_joints))
+    robot_config = FeetechRobotConfig(joint_ids=joint_ids, joint_offsets=np.zeros(num_joints), joint_signs=np.ones(num_joints), models=['sts3215']*2+['scs0009']*6)
 
+    # device_ids = [
+    # # top-down, side
+    # '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:1:1.0-video-index0',
+    # # top, front, back, left, right
+    # '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:9:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:10:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:11:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:7:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:8:1.0-video-index0', 
+    # # front
+    # '/dev/v4l/by-path/pci-0000:2b:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:2e:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:2f:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:30:00.0-usb-0:2:1.0-video-index0', 
+    # # back
+    # '/dev/v4l/by-path/pci-0000:33:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:36:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:37:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:38:00.0-usb-0:2:1.0-video-index0',
+    # # left
+    # '/dev/v4l/by-path/pci-0000:1b:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:1e:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:1f:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:20:00.0-usb-0:2:1.0-video-index0', 
+    # # right
+    # '/dev/v4l/by-path/pci-0000:23:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:26:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:27:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:28:00.0-usb-0:2:1.0-video-index0', 
+    # ]
     device_ids = [
-    # top-down, side
-    '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:1:1.0-video-index0',
-    # top, front, back, left, right
-    '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:9:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:10:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:11:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:7:1.0-video-index0', '/dev/v4l/by-path/pci-0000:00:14.0-usb-0:8:1.0-video-index0', 
-    # front
-    '/dev/v4l/by-path/pci-0000:2b:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:2e:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:2f:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:30:00.0-usb-0:2:1.0-video-index0', 
-    # back
-    '/dev/v4l/by-path/pci-0000:33:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:36:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:37:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:38:00.0-usb-0:2:1.0-video-index0',
-    # left
-    '/dev/v4l/by-path/pci-0000:1b:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:1e:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:1f:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:20:00.0-usb-0:2:1.0-video-index0', 
-    # right
-    '/dev/v4l/by-path/pci-0000:23:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:26:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:27:00.0-usb-0:2:1.0-video-index0', '/dev/v4l/by-path/pci-0000:28:00.0-usb-0:2:1.0-video-index0', 
+    '/dev/camera_module1_f',
+    '/dev/camera_module8_b', 
+    '/dev/camera_head', 
+    '/dev/camera_module7_b',
+    '/dev/camera_module1_b',
+    '/dev/camera_module7_f',
+    '/dev/camera_module8_f'
     ]
+
     usbcams = [USBCamera(device_id=idx, fps=camera_fps) for idx in device_ids]
     shm_manager = SharedMemoryManager()
     shm_manager.start()
@@ -116,7 +127,7 @@ def main(
     time.sleep(2)
     camera_clients = {}
 
-    robot = SnakeAgent(port=port, dynamixel_config=robot_config, enable_torque=True, control_rate_hz=control_rate, camera_dict=camera_clients, camera_server=camera_server)
+    robot = SnakeAgent(port=port, feetech_config=robot_config, enable_torque=True, control_rate_hz=control_rate, camera_dict=camera_clients, camera_server=camera_server)
 
     if initialize:
         # initialize: set client joint positions to leader joint positions
@@ -144,8 +155,10 @@ def main(
         mjdata.qpos[:] = obs['joint_pos'] - np.pi
         mjdata.qvel[:] = obs['joint_vel']
         mujoco.mj_step(mjmodel, mjdata)
-        obs_dict_np['camera_ori'] = mjdata.site_xmat.copy().reshape((-1, 3, 3))[..., :2].reshape((-1, 6))[[16, 17, 19, 18, 20, 15, 11, 7, 3, 14, 10, 6, 2, 12, 8, 4, 0, 13, 9, 5, 1], :]
-        obs_dict_np['camera_pos'] = mjdata.site_xpos.copy().reshape((-1, 3))[[16, 17, 19, 18, 20, 15, 11, 7, 3, 14, 10, 6, 2, 12, 8, 4, 0, 13, 9, 5, 1], :]
+        # obs_dict_np['camera_ori'] = mjdata.site_xmat.copy().reshape((-1, 3, 3))[..., :2].reshape((-1, 6))[[16, 17, 19, 18, 20, 15, 11, 7, 3, 14, 10, 6, 2, 12, 8, 4, 0, 13, 9, 5, 1], :]
+        # obs_dict_np['camera_pos'] = mjdata.site_xpos.copy().reshape((-1, 3))[[16, 17, 19, 18, 20, 15, 11, 7, 3, 14, 10, 6, 2, 12, 8, 4, 0, 13, 9, 5, 1], :]
+        obs_dict_np['camera_ori'] = mjdata.site_xmat.copy().reshape((-1, 3, 3))[..., :2].reshape((-1, 6))[[1,0,3,2,5,4,6], :]
+        obs_dict_np['camera_pos'] = mjdata.site_xpos.copy().reshape((-1, 3))[[1,0,3,2,5,4,6], :]
         last_obs_dict_np = {k: np.repeat(v[None], img_obs_horizon, axis=0) for k, v in obs_dict_np.items()}
         obs_dict = dict_apply(last_obs_dict_np, 
             lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
@@ -160,7 +173,7 @@ def main(
     print("ready")
     try:
         while True:
-            obs = robot.get_obs()  
+            obs = robot.get_obs() 
             if record:
                 save_data["rgb"].append(obs["usb_cam"])
                 save_data["joint_pos"].append(obs["joint_pos"])
@@ -171,8 +184,8 @@ def main(
                 mjdata.qpos[:] = obs['joint_pos'] - np.pi
                 mjdata.qvel[:] = obs['joint_vel']
                 mujoco.mj_step(mjmodel, mjdata)
-                obs_dict_np['camera_ori'] = mjdata.site_xmat.copy().reshape((-1, 3, 3))[..., :2].reshape((-1, 6))[[16, 17, 19, 18, 20, 15, 11, 7, 3, 14, 10, 6, 2, 12, 8, 4, 0, 13, 9, 5, 1], :]
-                obs_dict_np['camera_pos'] = mjdata.site_xpos.copy().reshape((-1, 3))[[16, 17, 19, 18, 20, 15, 11, 7, 3, 14, 10, 6, 2, 12, 8, 4, 0, 13, 9, 5, 1], :]
+                obs_dict_np['camera_ori'] = mjdata.site_xmat.copy().reshape((-1, 3, 3))[..., :2].reshape((-1, 6))[[1,0,3,2,5,4,6], :]
+                obs_dict_np['camera_pos'] = mjdata.site_xpos.copy().reshape((-1, 3))[[1,0,3,2,5,4,6], :]
                 last_obs_dict_np = {k: np.concatenate([last_obs_dict_np[k][1:], obs_dict_np[k][None]], axis=0) for k in obs_dict_np.keys()}
                 obs_dict = dict_apply(last_obs_dict_np, lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
                 actions = policy.predict_action(obs_dict)['action_pred'][0].detach().cpu().numpy()

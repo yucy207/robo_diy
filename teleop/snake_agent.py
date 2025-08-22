@@ -56,12 +56,7 @@ class FeetechRobot():
         assert np.all(np.abs(self._joint_signs) == 1)
         self._driver = FeetechDriver(joint_ids, self._models, port=port, baudrate=baudrate)
         self._driver.connect()
-        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * 5, 11, 1)
         self._driver.set_torque_enabled(joint_ids, enable_torque)
-        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * self.kP, 84, 2)
-        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * self.kI, 82, 2)
-        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * self.kD, 80, 2)
-        self._driver.sync_write(joint_ids, np.ones(len(joint_ids)) * self.curr_lim, 102, 2)
         self._torque_on = True
         self._last_pos = None
         self._alpha = 0.99
@@ -339,14 +334,14 @@ class SnakeAgent():
     def __init__(
             self,
             port: str,
-            dynamixel_config: Optional[DynamixelRobotConfig] = None,
+            feetech_config: Optional[FeetechRobotConfig] = None,
             enable_torque: bool = False,
             start_joints: Optional[np.ndarray] = None,
             control_rate_hz: float = 100.0,
             camera_dict: Optional[Dict[str, Any]] = None,
             camera_server: Optional[Any] = None,
     ) -> None:
-        self._robot = dynamixel_config.make_robot(
+        self._robot = feetech_config.make_robot(
             port=port, start_joints=start_joints, enable_torque=enable_torque
         )
         self._rate = Rate(control_rate_hz)

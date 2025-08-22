@@ -258,6 +258,7 @@ def assert_same_address(model_ctrl_table, motor_models, data_name):
     all_addr = []
     all_bytes = []
     for model in motor_models:
+        print("data_name:",data_name)
         addr, bytes = model_ctrl_table[model][data_name]
         all_addr.append(addr)
         all_bytes.append(bytes)
@@ -443,401 +444,141 @@ class FeetechMotorsBus:
     def motor_indices(self) -> list[int]:
         return [idx for idx, _ in self.motors.values()]
 
-    def set_calibration(self, calibration: dict[str, list]):
-        self.calibration = calibration
-
-    def apply_calibration_autocorrect(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """This function apply the calibration, automatically detects out of range errors for motors values and attempt to correct.
-
-        For more info, see docstring of `apply_calibration` and `autocorrect_calibration`.
-        """
-        try:
-            values = self.apply_calibration(values, motor_names)
-        except JointOutOfRangeError as e:
-            print(e)
-            self.autocorrect_calibration(values, motor_names)
-            values = self.apply_calibration(values, motor_names)
-        return values
-
-    def apply_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """Convert from unsigned int32 joint position range [0, 2**32[ to the universal float32 nominal degree range ]-180.0, 180.0[ with
-        a "zero position" at 0 degree.
-
-        Note: We say "nominal degree range" since the motors can take values outside this range. For instance, 190 degrees, if the motor
-        rotate more than a half a turn from the zero position. However, most motors can't rotate more than 180 degrees and will stay in this range.
-
-        Joints values are original in [0, 2**32[ (unsigned int32). Each motor are expected to complete a full rotation
-        when given a goal position that is + or - their resolution. For instance, feetech xl330-m077 have a resolution of 4096, and
-        at any position in their original range, let's say the position 56734, they complete a full rotation clockwise by moving to 60830,
-        or anticlockwise by moving to 52638. The position in the original range is arbitrary and might change a lot between each motor.
-        To harmonize between motors of the same model, different robots, or even models of different brands, we propose to work
-        in the centered nominal degree range ]-180, 180[.
-        """
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        # Convert from unsigned int32 original range [0, 2**32] to signed float32 range
-        values = values.astype(np.float32)
-
-        for i, name in enumerate(motor_names):
-            calib_idx = self.calibration["motor_names"].index(name)
-            calib_mode = self.calibration["calib_mode"][calib_idx]
-
-            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                drive_mode = self.calibration["drive_mode"][calib_idx]
-                homing_offset = self.calibration["homing_offset"][calib_idx]
-                _, model = self.motors[name]
-                resolution = self.model_resolution[model]
-
-                # Update direction of rotation of the motor to match between leader and follower.
-                # In fact, the motor of the leader for a given joint can be assembled in an
-                # opposite direction in term of rotation than the motor of the follower on the same joint.
-                if drive_mode:
-                    values[i] *= -1
-
-                # Convert from range [-2**31, 2**31[ to
-                # nominal range ]-resolution, resolution[ (e.g. ]-2048, 2048[)
-                values[i] += homing_offset
-
-                # Convert from range ]-resolution, resolution[ to
-                # universal float32 centered degree range ]-180, 180[
-                values[i] = values[i] / (resolution // 2) * HALF_TURN_DEGREE
-                if (values[i] < LOWER_BOUND_DEGREE) or (values[i] > UPPER_BOUND_DEGREE):
-                    raise JointOutOfRangeError(
-                        f"Wrong motor position range detected for {name}. "
-                        f"Expected to be in nominal range of [-{HALF_TURN_DEGREE}, {HALF_TURN_DEGREE}] degrees (a full rotation), "
-                        f"with a maximum range of [{LOWER_BOUND_DEGREE}, {UPPER_BOUND_DEGREE}] degrees to account for joints that can rotate a bit more, "
-                        f"but present value is {values[i]} degree. "
-                        "This might be due to a cable connection issue creating an artificial 360 degrees jump in motor values. "
-                        "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
-                    )
-
-            elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
-                start_pos = self.calibration["start_pos"][calib_idx]
-                end_pos = self.calibration["end_pos"][calib_idx]
-
-                # Rescale the present position to a nominal range [0, 100] %,
-                # useful for joints with linear motions like Aloha gripper
-                values[i] = (values[i] - start_pos) / (end_pos - start_pos) * 100
-
-                if (values[i] < LOWER_BOUND_LINEAR) or (values[i] > UPPER_BOUND_LINEAR):
-                    raise JointOutOfRangeError(
-                        f"Wrong motor position range detected for {name}. "
-                        f"Expected to be in nominal range of [0, 100] % (a full linear translation), "
-                        f"with a maximum range of [{LOWER_BOUND_LINEAR}, {UPPER_BOUND_LINEAR}] % to account for some imprecision during calibration, "
-                        f"but present value is {values[i]} %. "
-                        "This might be due to a cable connection issue creating an artificial jump in motor values. "
-                        "You need to recalibrate by running: `python lerobot/scripts/control_robot.py calibrate`"
-                    )
-
-        return values
-
-    def autocorrect_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """This function automatically detects issues with values of motors after calibration, and correct for these issues.
-
-        Some motors might have values outside of expected maximum bounds after calibration.
-        For instance, for a joint in degree, its value can be outside [-270, 270] degrees, which is totally unexpected given
-        a nominal range of [-180, 180] degrees, which represents half a turn to the left or right starting from zero position.
-
-        Known issues:
-        #1: Motor value randomly shifts of a full turn, caused by hardware/connection errors.
-        #2: Motor internal homing offset is shifted of a full turn, caused by using default calibration (e.g Aloha).
-        #3: motor internal homing offset is shifted of less or more than a full turn, caused by using default calibration
-            or by human error during manual calibration.
-
-        Issues #1 and #2 can be solved by shifting the calibration homing offset by a full turn.
-        Issue #3 will be visually detected by user and potentially captured by the safety feature `max_relative_target`,
-        that will slow down the motor, raise an error asking to recalibrate. Manual recalibrating will solve the issue.
-
-        Note: A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
-        """
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        # Convert from unsigned int32 original range [0, 2**32] to signed float32 range
-        values = values.astype(np.float32)
-
-        for i, name in enumerate(motor_names):
-            calib_idx = self.calibration["motor_names"].index(name)
-            calib_mode = self.calibration["calib_mode"][calib_idx]
-
-            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                drive_mode = self.calibration["drive_mode"][calib_idx]
-                homing_offset = self.calibration["homing_offset"][calib_idx]
-                _, model = self.motors[name]
-                resolution = self.model_resolution[model]
-
-                if drive_mode:
-                    values[i] *= -1
-
-                # Convert from initial range to range [-180, 180] degrees
-                calib_val = (values[i] + homing_offset) / (resolution // 2) * HALF_TURN_DEGREE
-                in_range = (calib_val > LOWER_BOUND_DEGREE) and (calib_val < UPPER_BOUND_DEGREE)
-
-                # Solve this inequality to find the factor to shift the range into [-180, 180] degrees
-                # values[i] = (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE
-                # - HALF_TURN_DEGREE <= (values[i] + homing_offset + resolution * factor) / (resolution // 2) * HALF_TURN_DEGREE <= HALF_TURN_DEGREE
-                # (- HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset) / resolution <= factor <= (HALF_TURN_DEGREE / 180 * (resolution // 2) - values[i] - homing_offset) / resolution
-                low_factor = (
-                    -HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset
-                ) / resolution
-                upp_factor = (
-                    HALF_TURN_DEGREE / HALF_TURN_DEGREE * (resolution // 2) - values[i] - homing_offset
-                ) / resolution
-
-            elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
-                start_pos = self.calibration["start_pos"][calib_idx]
-                end_pos = self.calibration["end_pos"][calib_idx]
-
-                # Convert from initial range to range [0, 100] in %
-                calib_val = (values[i] - start_pos) / (end_pos - start_pos) * 100
-                in_range = (calib_val > LOWER_BOUND_LINEAR) and (calib_val < UPPER_BOUND_LINEAR)
-
-                # Solve this inequality to find the factor to shift the range into [0, 100] %
-                # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos + resolution * factor - start_pos - resolution * factor) * 100
-                # values[i] = (values[i] - start_pos + resolution * factor) / (end_pos - start_pos) * 100
-                # 0 <= (values[i] - start_pos + resolution * factor) / (end_pos - start_pos) * 100 <= 100
-                # (start_pos - values[i]) / resolution <= factor <= (end_pos - values[i]) / resolution
-                low_factor = (start_pos - values[i]) / resolution
-                upp_factor = (end_pos - values[i]) / resolution
-
-            if not in_range:
-                # Get first integer between the two bounds
-                if low_factor < upp_factor:
-                    factor = math.ceil(low_factor)
-
-                    if factor > upp_factor:
-                        raise ValueError(f"No integer found between bounds [{low_factor=}, {upp_factor=}]")
-                else:
-                    factor = math.ceil(upp_factor)
-
-                    if factor > low_factor:
-                        raise ValueError(f"No integer found between bounds [{low_factor=}, {upp_factor=}]")
-
-                if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                    out_of_range_str = f"{LOWER_BOUND_DEGREE} < {calib_val} < {UPPER_BOUND_DEGREE} degrees"
-                    in_range_str = f"{LOWER_BOUND_DEGREE} < {calib_val} < {UPPER_BOUND_DEGREE} degrees"
-                elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
-                    out_of_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
-                    in_range_str = f"{LOWER_BOUND_LINEAR} < {calib_val} < {UPPER_BOUND_LINEAR} %"
-
-                logging.warning(
-                    f"Auto-correct calibration of motor '{name}' by shifting value by {abs(factor)} full turns, "
-                    f"from '{out_of_range_str}' to '{in_range_str}'."
-                )
-
-                # A full turn corresponds to 360 degrees but also to 4096 steps for a motor resolution of 4096.
-                self.calibration["homing_offset"][calib_idx] += resolution * factor
-
-    def revert_calibration(self, values: np.ndarray | list, motor_names: list[str] | None):
-        """Inverse of `apply_calibration`."""
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        for i, name in enumerate(motor_names):
-            calib_idx = self.calibration["motor_names"].index(name)
-            calib_mode = self.calibration["calib_mode"][calib_idx]
-
-            if CalibrationMode[calib_mode] == CalibrationMode.DEGREE:
-                drive_mode = self.calibration["drive_mode"][calib_idx]
-                homing_offset = self.calibration["homing_offset"][calib_idx]
-                _, model = self.motors[name]
-                resolution = self.model_resolution[model]
-
-                # Convert from nominal 0-centered degree range [-180, 180] to
-                # 0-centered resolution range (e.g. [-2048, 2048] for resolution=4096)
-                values[i] = values[i] / HALF_TURN_DEGREE * (resolution // 2)
-
-                # Subtract the homing offsets to come back to actual motor range of values
-                # which can be arbitrary.
-                values[i] -= homing_offset
-
-                # Remove drive mode, which is the rotation direction of the motor, to come back to
-                # actual motor rotation direction which can be arbitrary.
-                if drive_mode:
-                    values[i] *= -1
-
-            elif CalibrationMode[calib_mode] == CalibrationMode.LINEAR:
-                start_pos = self.calibration["start_pos"][calib_idx]
-                end_pos = self.calibration["end_pos"][calib_idx]
-
-                # Convert from nominal lnear range of [0, 100] % to
-                # actual motor range of values which can be arbitrary.
-                values[i] = values[i] / 100 * (end_pos - start_pos) + start_pos
-
-        values = np.round(values).astype(np.int32)
-        return values
-
-    def avoid_rotation_reset(self, values, motor_names, data_name):
-        if data_name not in self.track_positions:
-            self.track_positions[data_name] = {
-                "prev": [None] * len(self.motor_names),
-                # Assume False at initialization
-                "below_zero": [False] * len(self.motor_names),
-                "above_max": [False] * len(self.motor_names),
-            }
-
-        track = self.track_positions[data_name]
-
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        for i, name in enumerate(motor_names):
-            idx = self.motor_names.index(name)
-
-            if track["prev"][idx] is None:
-                track["prev"][idx] = values[i]
-                continue
-
-            # Detect a full rotation occurred
-            if abs(track["prev"][idx] - values[i]) > 2348:
-            # if abs(track["prev"][idx] - values[i]) > 2048:
-                # Position went below 0 and got reset to 4095
-                if track["prev"][idx] < values[i]:
-                    # So we set negative value by adding a full rotation
-                    values[i] -= 4096
-
-                # Position went above 4095 and got reset to 0
-                elif track["prev"][idx] > values[i]:
-                    # So we add a full rotation
-                    values[i] += 4096
-
-            track["prev"][idx] = values[i]
-
-        return values
-
     def read_with_motor_ids(self, motor_models, motor_ids, data_name, num_retry=NUM_READ_RETRY):
         import scservo_sdk as scs
 
-        return_list = True
         if not isinstance(motor_ids, list):
-            return_list = False
             motor_ids = [motor_ids]
 
+        self.port_handler.ser.reset_output_buffer()
+        self.port_handler.ser.reset_input_buffer()
         assert_same_address(self.model_ctrl_table, self.motor_models, data_name)
-        addr, bytes = self.model_ctrl_table[motor_models[0]][data_name]
-        group = scs.GroupSyncRead(self.port_handler, self.packet_handler, addr, bytes)
-        for idx in motor_ids:
-            group.addParam(idx)
-
-        for _ in range(num_retry):
-            comm = group.txRxPacket()
-            if comm == scs.COMM_SUCCESS:
-                break
-
-        if comm != scs.COMM_SUCCESS:
-            raise ConnectionError(
-                f"Read failed due to communication error on port {self.port_handler.port_name} for indices {motor_ids}: "
-                f"{self.packet_handler.getTxRxResult(comm)}"
-            )
-
         values = []
+        print("self.motor_models:",self.motor_models)
+        print("motor_ids:",motor_ids)
+        print("data_name:",data_name)
         for idx in motor_ids:
-            value = group.getData(idx, addr, bytes)
-            values.append(value)
-
-        if return_list:
-            return values
-        else:
-            return values[0]
-
-    def read(self, data_name, motor_names: str | list[str] | None = None):
-        import scservo_sdk as scs
-
-        if not self.is_connected:
-            raise RobotDeviceNotConnectedError(
-                f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
-            )
-
-        start_time = time.perf_counter()
-
-        if motor_names is None:
-            motor_names = self.motor_names
-
-        if isinstance(motor_names, str):
-            motor_names = [motor_names]
-
-        motor_ids = []
-        models = []
-        sts_motor_names = []
-        sts_motor_ids = []
-        motor_id2model = {}
-        for name in motor_names:
-            motor_idx, model = self.motors[name]
-            motor_ids.append(motor_idx)
-            models.append(model)
-            motor_id2model[motor_idx]=model
-            if model == 'sts3215':
-                sts_motor_names.append(name)
-                sts_motor_ids.append(motor_idx)
-
-        assert_same_address(self.model_ctrl_table, models, data_name)
-        addr, bytes = self.model_ctrl_table[model][data_name]
-        group_key = get_group_sync_key(data_name, sts_motor_names)
-        # print("data_name:",data_name)
-        if data_name not in self.group_readers:
-            # Very Important to flush the buffer!
-            self.port_handler.ser.reset_output_buffer()
-            self.port_handler.ser.reset_input_buffer()
-
-            # create new group reader
-            self.group_readers[group_key] = scs.GroupSyncRead(
-                self.port_handler, self.packet_handler, addr, bytes
-            )
-            for idx in sts_motor_ids:
-                self.group_readers[group_key].addParam(idx)
-        if 'sts3215' in self.motor_models:
-            for _ in range(NUM_READ_RETRY):
-                comm = self.group_readers[group_key].txRxPacket()
-                if comm == scs.COMM_SUCCESS:
-                    break
-
-            if comm != scs.COMM_SUCCESS:
+            motor_id=idx+1
+            addr, bytes = self.model_ctrl_table[self.motor_models[idx]][data_name]
+            print("addr:", addr, "bytes:", bytes)
+            self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION[self.motor_models[idx]])
+            if bytes == 1:
+                value, comm, error = self.packet_handler.read1ByteTxRx(self.port_handler, motor_id, addr)
+            elif bytes == 2:
+                value, comm, error = self.packet_handler.read2ByteTxRx(self.port_handler, motor_id, addr)
+            if comm != scs.COMM_SUCCESS or error != 0:
                 raise ConnectionError(
-                    f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
-                    f"{self.packet_handler.getTxRxResult(comm)}"
+                    f"Read failed on port {self.port} for idx {motor_id}: comm={comm} ({self.packet_handler.getTxRxResult(comm)}), "
+                    f"error={error} ({self.packet_handler.getRxPacketError(error)})"
                 )
-
-        values = []
-        for idx in motor_ids:
-            self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION[motor_id2model[idx]])
-            if motor_id2model[idx] == 'scs0009':
-                if bytes == 1:
-                    value, comm, error = self.packet_handler.read1ByteTxRx(self.port_handler, idx, addr)
-                elif bytes == 2:
-                    value, comm, error = self.packet_handler.read2ByteTxRx(self.port_handler, idx, addr)
-                if comm != scs.COMM_SUCCESS or error != 0:
-                    raise ConnectionError(
-                        f"Write failed on port {self.port} for idx {idx}: comm={comm} ({self.packet_handler.getTxRxResult(comm)}), "
-                        f"error={error} ({self.packet_handler.getRxPacketError(error)})"
-                    )
-            else:
-                value = self.group_readers[group_key].getData(idx, addr, bytes)
             values.append(value)
+            print("value:", value)
 
         values = np.array(values)
 
-        # Convert to signed int to use range [-2048, 2048] for our motor positions.
-        # print("before cali:", values)
-        # time.sleep(0.5)  # wait for the motors to update their values
         if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
             values = values.astype(np.int32)
 
-        if data_name in CALIBRATION_REQUIRED:
-            values = self.avoid_rotation_reset(values, motor_names, data_name)
-
-        if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
-            values = self.apply_calibration_autocorrect(values, motor_names)
-
-        # log the number of seconds it took to read the data from the motors
-        delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
-        self.logs[delta_ts_name] = time.perf_counter() - start_time
-
-        # log the utc time at which the data was received
-        ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
-        self.logs[ts_utc_name] = capture_timestamp_utc()
-
         return values
+    
+
+    # def read(self, data_name, motor_names: str | list[str] | None = None):
+    #     import scservo_sdk as scs
+
+    #     if not self.is_connected:
+    #         raise RobotDeviceNotConnectedError(
+    #             f"FeetechMotorsBus({self.port}) is not connected. You need to run `motors_bus.connect()`."
+    #         )
+
+    #     start_time = time.perf_counter()
+
+    #     if motor_names is None:
+    #         motor_names = self.motor_names
+
+    #     if isinstance(motor_names, str):
+    #         motor_names = [motor_names]
+
+    #     motor_ids = []
+    #     models = []
+    #     sts_motor_names = []
+    #     sts_motor_ids = []
+    #     motor_id2model = {}
+    #     for name in motor_names:
+    #         motor_idx, model = self.motors[name]
+    #         motor_ids.append(motor_idx)
+    #         models.append(model)
+    #         motor_id2model[motor_idx]=model
+    #         if model == 'sts3215':
+    #             sts_motor_names.append(name)
+    #             sts_motor_ids.append(motor_idx)
+
+    #     assert_same_address(self.model_ctrl_table, models, data_name)
+    #     addr, bytes = self.model_ctrl_table[model][data_name]
+    #     group_key = get_group_sync_key(data_name, sts_motor_names)
+    #     # print("data_name:",data_name)
+    #     if data_name not in self.group_readers:
+    #         # Very Important to flush the buffer!
+    #         self.port_handler.ser.reset_output_buffer()
+    #         self.port_handler.ser.reset_input_buffer()
+
+    #         # create new group reader
+    #         self.group_readers[group_key] = scs.GroupSyncRead(
+    #             self.port_handler, self.packet_handler, addr, bytes
+    #         )
+    #         for idx in sts_motor_ids:
+    #             self.group_readers[group_key].addParam(idx)
+    #     if 'sts3215' in self.motor_models:
+    #         for _ in range(NUM_READ_RETRY):
+    #             comm = self.group_readers[group_key].txRxPacket()
+    #             if comm == scs.COMM_SUCCESS:
+    #                 break
+
+    #         if comm != scs.COMM_SUCCESS:
+    #             raise ConnectionError(
+    #                 f"Read failed due to communication error on port {self.port} for group_key {group_key}: "
+    #                 f"{self.packet_handler.getTxRxResult(comm)}"
+    #             )
+
+    #     values = []
+    #     for idx in motor_ids:
+    #         self.packet_handler = scs.PacketHandler(PROTOCOL_VERSION[motor_id2model[idx]])
+    #         if motor_id2model[idx] == 'scs0009':
+    #             if bytes == 1:
+    #                 value, comm, error = self.packet_handler.read1ByteTxRx(self.port_handler, idx, addr)
+    #             elif bytes == 2:
+    #                 value, comm, error = self.packet_handler.read2ByteTxRx(self.port_handler, idx, addr)
+    #             if comm != scs.COMM_SUCCESS or error != 0:
+    #                 raise ConnectionError(
+    #                     f"Write failed on port {self.port} for idx {idx}: comm={comm} ({self.packet_handler.getTxRxResult(comm)}), "
+    #                     f"error={error} ({self.packet_handler.getRxPacketError(error)})"
+    #                 )
+    #         else:
+    #             value = self.group_readers[group_key].getData(idx, addr, bytes)
+    #         values.append(value)
+
+    #     values = np.array(values)
+
+    #     # Convert to signed int to use range [-2048, 2048] for our motor positions.
+    #     # print("before cali:", values)
+    #     # time.sleep(0.5)  # wait for the motors to update their values
+    #     if data_name in CONVERT_UINT32_TO_INT32_REQUIRED:
+    #         values = values.astype(np.int32)
+
+    #     if data_name in CALIBRATION_REQUIRED:
+    #         values = self.avoid_rotation_reset(values, motor_names, data_name)
+
+    #     if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
+    #         values = self.apply_calibration_autocorrect(values, motor_names)
+
+    #     # log the number of seconds it took to read the data from the motors
+    #     delta_ts_name = get_log_name("delta_timestamp_s", "read", data_name, motor_names)
+    #     self.logs[delta_ts_name] = time.perf_counter() - start_time
+
+    #     # log the utc time at which the data was received
+    #     ts_utc_name = get_log_name("timestamp_utc", "read", data_name, motor_names)
+    #     self.logs[ts_utc_name] = capture_timestamp_utc()
+
+    #     return values
 
     def write_with_motor_ids(self, motor_models, motor_ids, data_name, values, num_retry=NUM_WRITE_RETRY):
         import scservo_sdk as scs
@@ -894,9 +635,6 @@ class FeetechMotorsBus:
             motor_ids.append(motor_idx)
             models.append(model)
             motor_id2model[motor_idx]=model
-
-        if data_name in CALIBRATION_REQUIRED and self.calibration is not None:
-            values = self.revert_calibration(values, motor_names)
 
         # if data_name == "Goal_Position":
         #     print("revert_calibration Goal_Position:", values)
@@ -1024,7 +762,11 @@ class FeetechDriver:
         # 读取所有关节 Present_Position，使用对应的motor model
         result = []
         for jid in self.joint_ids:
+            # if jid < 2:
+            #     continue
             motor_model = self._get_model_for_joint_id(jid)
+            print("motor_model:", motor_model)
+            print("jid:", jid)
             pos = self.bus.read_with_motor_ids([motor_model], [jid], "Present_Position")[0]
             result.append(pos)
         return np.array(result)
